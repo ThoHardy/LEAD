@@ -1,6 +1,3 @@
-Modeling and fitting Latent Evidence Accumulation Dynamics from EEG data.
-
-
 ================================================================================
                     LEAD TOOLBOX - DOCUMENTATION
 ================================================================================
