@@ -2,23 +2,20 @@ import numpy as np
 from . import model as model
 
 
-def clever_fit_linear(state_train: dict[int, np.ndarray], input_train: dict[int, np.ndarray], n_loops: int=2, input_start_index: int=75, input_stop_index: int=100) -> model.StratifiedLinear:
+def clever_fit_linear(state_train: dict[int, np.ndarray], input_train: dict[int, np.ndarray], input_start_index: int=75, input_stop_index: int=100) -> model.StratifiedLinear:
     """
     Clever fitting strategy for StratifiedLinear model.
     
     Strategy:
     1. Fit tau, process_noise, measure_noise on category 0 (resting state, w0=0)
     2. For each category 1-6, fit the corresponding w_i on constant stimulation segments
-    
-    This leverages the fact that category 0 has no input (w0=0) and nonlinearities 
-    typically don't appear, allowing a simple linear fit to initialize the core parameters.
     """
+
     n_categories = len(list(state_train.keys()))
 
     # Fit the OU process on resting-state dynamics (category 0)
     # We use a simple Linear model temporarily to get tau, process_noise, measure_noise
     linear_resting_state = model.StratifiedLinear(tau=10, process_noise=0.1, measure_noise=0.1, w0=0)
-    linear_resting_state.dt = 1.0  # Match the dt used in data generation
     linear_resting_state.fit(
         state_series={0: state_train[0]},
         input_series={0: input_train[0]},
@@ -36,7 +33,6 @@ def clever_fit_linear(state_train: dict[int, np.ndarray], input_train: dict[int,
         process_noise=linear_resting_state.process_noise, 
         measure_noise=linear_resting_state.measure_noise
     )
-    linear.dt = 1.0
     
     for cat in range(1, n_categories):
         ws, lls = [], []
@@ -47,7 +43,6 @@ def clever_fit_linear(state_train: dict[int, np.ndarray], input_train: dict[int,
                 process_noise=linear.process_noise, 
                 measure_noise=linear.measure_noise
             )
-            linear_one_cat.dt = 1.0
             setattr(linear_one_cat, f'w{cat}', w_init)
             
             # Fit only the weight for this category
@@ -69,7 +64,7 @@ def clever_fit_linear(state_train: dict[int, np.ndarray], input_train: dict[int,
     return linear
 
 
-def clever_fit_gainmodul(linear_prefitted: model.StratifiedLinear, state_train: dict[int, np.ndarray], input_train: dict[int, np.ndarray], n_loops: int=2, input_start_index: int=75, input_stop_index: int=100, feedback=False) -> model.StratifiedGainModulation:
+def clever_fit_gainmodul(linear_prefitted: model.StratifiedLinear, state_train: dict[int, np.ndarray], input_train: dict[int, np.ndarray], n_loops: int=2, input_start_index: int=75, input_stop_index: int=100) -> model.StratifiedGainModulation:
     """
     Clever fitting strategy for StratifiedGainModulation model.
     
@@ -80,11 +75,11 @@ def clever_fit_gainmodul(linear_prefitted: model.StratifiedLinear, state_train: 
        - Fitting (w, g) pairs for each category
        - Re-adjusting the threshold and tau
     """
+
     n_categories = len(list(state_train.keys()))
 
     # Fit the OU process on resting-state dynamics
     linear = model.StratifiedLinear(tau=10, process_noise=0.1, measure_noise=0.1)
-    linear.dt = 1.0
     linear.fit(
         state_series={0: state_train[0]},
         input_series={0: input_train[0]},
@@ -112,12 +107,11 @@ def clever_fit_gainmodul(linear_prefitted: model.StratifiedLinear, state_train: 
                 **{f"w{cat}": getattr(linear_prefitted, f"w{cat}")*w_multiplier for cat in range(1, n_categories)}, 
                 **{f"g{cat}": getattr(linear_prefitted, f"w{cat}")*init_gain_multiplier for cat in range(1, n_categories)}
             )
-            gainmodul.dt = 1.0
             
             for _ in range(n_loops):
                 # Focus on the (w, g) couples for all categories except 0
                 for cat in range(1, n_categories):
-                    gainmodul_one_cat = model.GainModulation(
+                    gainmodul_one_cat = model.NonLinear1(
                         tau=gainmodul.tau, 
                         process_noise=gainmodul.process_noise, 
                         measure_noise=gainmodul.measure_noise,
@@ -126,7 +120,6 @@ def clever_fit_gainmodul(linear_prefitted: model.StratifiedLinear, state_train: 
                         threshold=gainmodul.threshold, 
                         sharpness=5
                     )
-                    gainmodul_one_cat.dt = 1.0
                     
                     gainmodul_one_cat.fit(
                         state_series={0: state_train_constant_stim[cat]},
@@ -152,13 +145,11 @@ def clever_fit_gainmodul(linear_prefitted: model.StratifiedLinear, state_train: 
             ll_GMmodels.append(gainmodul.loglikelihood(state_train_constant_stim, input_train_constant_stim))
     
     gainmodul_fitted = whole_GMmodels[np.argmax(ll_GMmodels)]
-    if feedback:
-        print(f'Best model selected among: {[m.get_params() for m in whole_GMmodels]}, \nwith respective log-likelihoods {ll_GMmodels}')
     
     return gainmodul_fitted
 
 
-def clever_fit_nonlinear1(linear_prefitted: model.StratifiedLinear, state_train: dict[int, np.ndarray], input_train: dict[int, np.ndarray], n_loops: int=2, input_start_index: int=75, input_stop_index: int=100, feedback=False) -> model.StratifiedNonLinear1:
+def clever_fit_nonlinear1(linear_prefitted: model.StratifiedLinear, state_train: dict[int, np.ndarray], input_train: dict[int, np.ndarray], n_loops: int=2, input_start_index: int=75, input_stop_index: int=100) -> model.StratifiedNonLinear1:
     """
     Clever fitting strategy for StratifiedNonLinear1 model.
     
@@ -169,11 +160,11 @@ def clever_fit_nonlinear1(linear_prefitted: model.StratifiedLinear, state_train:
        - Fitting gain and threshold
        - Fitting input weights for each category
     """
+
     n_categories = len(list(state_train.keys()))
 
     # Fit the OU process on resting-state dynamics
     linear = model.StratifiedLinear(tau=10, process_noise=0.1, measure_noise=0.1)
-    linear.dt = 1.0
     linear.fit(
         state_series={0: state_train[0]},
         input_series={0: input_train[0]},
@@ -203,7 +194,6 @@ def clever_fit_nonlinear1(linear_prefitted: model.StratifiedLinear, state_train:
                 sharpness=5,
                 **{f"w{cat}": getattr(linear_prefitted, f"w{cat}")*w_multiplier for cat in range(1, n_categories)}
             )
-            nonlinear.dt = 1.0
             
             for _ in range(n_loops):
                 # Focus on the gain and the threshold
@@ -211,15 +201,15 @@ def clever_fit_nonlinear1(linear_prefitted: model.StratifiedLinear, state_train:
                     state_series=state_train_constant_stim,
                     input_series=input_train_constant_stim,
                     init_params=[getattr(nonlinear, pname) for pname in nonlinear._param_names],
-                    bounds=[(1,25), (0.01, 1), (0.01, 1)] + [(0, 1)]*7 + [(0, 0.5), (0, 2), (0, 10)],   # Maybe put the upper limit for gain at 1, as for the GainModulation model ?
+                    bounds=[(1,25), (0.01, 1), (0.01, 1)] + [(0, 1)]*7 + [(0, 0.5), (0, 2), (0, 10)],
                     fixed_params=['tau', 'process_noise', 'measure_noise', 'sharpness'] + [f'w{cat}' for cat in range(7)],
                     feedback=False
                 )
                 
                 # Focus on the w for all categories except 0
                 for cat in range(1, n_categories):
-                    # Use GainModulation as a proxy for fitting
-                    gainmodul_one_cat = model.GainModulation(
+
+                    nonlinear_one_cat = model.NonLinear1(
                         tau=nonlinear.tau, 
                         process_noise=nonlinear.process_noise, 
                         measure_noise=nonlinear.measure_noise,
@@ -228,17 +218,16 @@ def clever_fit_nonlinear1(linear_prefitted: model.StratifiedLinear, state_train:
                         threshold=nonlinear.threshold, 
                         sharpness=5
                     )
-                    gainmodul_one_cat.dt = 1.0
                     
-                    gainmodul_one_cat.fit(
+                    nonlinear_one_cat.fit(
                         state_series={0: state_train_constant_stim[cat]},
                         input_series={0: input_train_constant_stim[cat]},
-                        init_params=[getattr(gainmodul_one_cat, pname) for pname in gainmodul_one_cat._param_names],
+                        init_params=[getattr(nonlinear_one_cat, pname) for pname in nonlinear_one_cat._param_names],
                         bounds=[(1,25), (0.01, 1), (0.01, 1), (0, 1), (0, 1), (0, 2), (0, 10)],
                         fixed_params=['tau', 'process_noise', 'measure_noise', 'threshold', 'gain', 'sharpness'],
                         feedback=False
                     )
-                    nonlinear.set_params({f'w{cat}': gainmodul_one_cat.input_weight})
+                    nonlinear.set_params({f'w{cat}': nonlinear_one_cat.input_weight})
                     
                 # Re-adjust tau
                 nonlinear.fit(
@@ -253,16 +242,14 @@ def clever_fit_nonlinear1(linear_prefitted: model.StratifiedLinear, state_train:
             ll_models.append(nonlinear.loglikelihood(state_train_constant_stim, input_train_constant_stim))
     
     nonlinear_fitted = all_models[np.argmax(ll_models)]
-    if feedback:
-        print(f'Best model selected with log-likelihood {max(ll_models)}')
     
     return nonlinear_fitted
 
 
 
-def clever_fit_nonlinear2(linear_prefitted: model.StratifiedLinear, state_train: dict[int, np.ndarray], input_train: dict[int, np.ndarray], n_loops: int=2, input_start_index: int=75, input_stop_index: int=100, feedback=False) -> model.StratifiedNonLinear2:
+def clever_fit_nonlinear2(linear_prefitted: model.StratifiedLinear, state_train: dict[int, np.ndarray], input_train: dict[int, np.ndarray], n_loops: int=2, input_start_index: int=75, input_stop_index: int=100) -> model.StratifiedNonLinear2:
     """
-    Clever fitting strategy for StratifiedNonLinear1 model.
+    Clever fitting strategy for StratifiedNonLinear2 model.
     
     Strategy:
     1. Initialize from prefitted linear model
@@ -275,7 +262,6 @@ def clever_fit_nonlinear2(linear_prefitted: model.StratifiedLinear, state_train:
 
     # Fit the OU process on resting-state dynamics
     linear = model.StratifiedLinear(tau=10, process_noise=0.1, measure_noise=0.1)
-    linear.dt = 1.0
     linear.fit(
         state_series={0: state_train[0]},
         input_series={0: input_train[0]},
@@ -306,7 +292,6 @@ def clever_fit_nonlinear2(linear_prefitted: model.StratifiedLinear, state_train:
                 sharpness=5,
                 **{f"w{cat}": getattr(linear_prefitted, f"w{cat}")*w_multiplier for cat in range(1, n_categories)}
             )
-            nonlinear.dt = 1.0
             
             for _ in range(n_loops):
                 # Adjust the threshold
@@ -341,7 +326,6 @@ def clever_fit_nonlinear2(linear_prefitted: model.StratifiedLinear, state_train:
                         threshold=nonlinear.threshold, 
                         sharpness=5
                     )
-                    nonlinear_one_cat.dt = 1.0
                     
                     nonlinear_one_cat.fit(
                         state_series={0: state_train_constant_stim[cat]},
@@ -366,7 +350,5 @@ def clever_fit_nonlinear2(linear_prefitted: model.StratifiedLinear, state_train:
             ll_models.append(nonlinear.loglikelihood(state_train_constant_stim, input_train_constant_stim))
     
     nonlinear_fitted = all_models[np.argmax(ll_models)]
-    if feedback:
-        print(f'Best model selected with log-likelihood {max(ll_models)}')
     
     return nonlinear_fitted
