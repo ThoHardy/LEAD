@@ -188,13 +188,15 @@ class LEAD_abstract(ABC):
         return state + dxdt * self.dt
 
     # --- Simulation Tools ---
-    def measure_simulations(self, input_series: dict):
+    def measure_simulations(self, input_series: dict, initial_states: dict = None):
         """Generates simulated data for the model."""
         simulations = {}
         for cat, inputs in input_series.items():
             
             n_sims, n_steps = inputs.shape
             states = np.zeros((n_sims, n_steps)) # Assuming x0 = 0
+            if initial_states != None:
+                states[:, 0] = initial_states[cat]
             
             # Pre-calculate process-noise scale
             noise_scale = self.process_noise * np.sqrt(self.dt)
